@@ -4,8 +4,18 @@ from typing import List
 from lib.types import Session, Message
 
 
-def format_session_list(sessions: List[Session], verbose: bool = False) -> str:
-    """Format a list of sessions as concise text output."""
+def format_session_list(
+    sessions: List[Session],
+    verbose: bool = False,
+    last_prompts: dict = None,
+) -> str:
+    """Format a list of sessions as concise text output.
+
+    Args:
+        last_prompts: Optional dict of session_id -> list of user prompt strings.
+                      If provided, shows the last 3 prompts to indicate what the
+                      conversation is *currently* about (not just how it started).
+    """
     if not sessions:
         return "No sessions found."
     lines = []
@@ -17,8 +27,24 @@ def format_session_list(sessions: List[Session], verbose: bool = False) -> str:
             prompt_preview += "..."
         line = f"[{source_tag}] {date} | {s.repo} | {s.id}"
         if s.title:
-            line += f"\n  Title: {s.title}"
-        line += f"\n  Prompt: {prompt_preview}"
+            title_short = s.title[:100].replace("\n", " ")
+            if len(s.title) > 100:
+                title_short += "..."
+            line += f"\n  Title: {title_short}"
+        line += f"\n  First: {prompt_preview}"
+
+        # Show last few prompts if available (reveals current topic)
+        if last_prompts and s.id in last_prompts:
+            recent = last_prompts[s.id]
+            if len(recent) > 1:
+                tail = recent[-3:]  # Last 3 prompts
+                line += f"\n  Recent ({len(recent)} turns):"
+                for p in tail:
+                    p_short = p[:100].replace("\n", " ")
+                    if len(p) > 100:
+                        p_short += "..."
+                    line += f"\n    - {p_short}"
+
         if verbose and s.model:
             line += f"\n  Model: {s.model}"
             if s.git_branch:

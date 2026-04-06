@@ -49,8 +49,9 @@ def cmd_search(args):
     if codex_reader:
         sessions = codex_reader.list_sessions(repo=args.repo, days_back=args.days)
         all_sessions.extend(sessions)
-        if args.deep:
-            user_prompts = codex_reader.get_user_prompts()
+        # Always load user prompts (Tier 2) — reads from rollout files,
+        # history.jsonl, and Desktop global state
+        user_prompts = codex_reader.get_all_user_prompts(sessions=sessions)
 
     if claude_reader:
         sessions = claude_reader.list_sessions(repo=args.repo, days_back=args.days)
@@ -62,26 +63,30 @@ def cmd_search(args):
 
     results = search_sessions(
         all_sessions, args.query,
-        user_prompts=user_prompts if args.deep else None,
+        user_prompts=user_prompts,
         deep=args.deep,
     )
-    print(format_session_list(results))
+    print(format_session_list(results, last_prompts=user_prompts))
 
 
 def cmd_recent(args):
     """Show recent sessions."""
     codex_reader, claude_reader = _get_readers(args.source)
     all_sessions = []
+    user_prompts = {}
 
     if codex_reader:
-        all_sessions.extend(codex_reader.list_sessions(repo=args.repo, days_back=args.days))
+        sessions = codex_reader.list_sessions(repo=args.repo, days_back=args.days)
+        all_sessions.extend(sessions)
+        # Load user prompts so we can show what each thread is currently about
+        user_prompts = codex_reader.get_all_user_prompts(sessions=sessions)
 
     if claude_reader:
         all_sessions.extend(claude_reader.list_sessions(repo=args.repo, days_back=args.days))
 
     # Sort combined results by updated_at descending
     all_sessions.sort(key=lambda s: s.updated_at, reverse=True)
-    print(format_session_list(all_sessions))
+    print(format_session_list(all_sessions, last_prompts=user_prompts))
 
 
 def cmd_thread(args):

@@ -25,9 +25,9 @@ class CodexReader:
         db_path: Optional[str] = None,
         history_path: Optional[str] = None,
     ):
-        home = Path(codex_home) if codex_home else CODEX_HOME
-        self._db_path = db_path or str(home / "state_5.sqlite")
-        self._history_path = history_path or str(home / "history.jsonl")
+        self._home = Path(codex_home) if codex_home else CODEX_HOME
+        self._db_path = db_path or str(self._home / "state_5.sqlite")
+        self._history_path = history_path or str(self._home / "history.jsonl")
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -194,6 +194,72 @@ class CodexReader:
                 text = entry.get("text", "")
                 if session_id and text:
                     prompts.setdefault(session_id, []).append(text)
+
+        return prompts
+
+    def get_all_user_prompts(self, sessions: Optional[List[Session]] = None) -> Dict[str, List[str]]:
+        """Gather user prompts from all available sources for search.
+
+        Reads from:
+        1. history.jsonl (legacy prompt log)
+        2. .codex-global-state.json prompt-history (recent Codex Desktop prompts)
+        3. Rollout JSONL files directly (most comprehensive, for provided sessions)
+
+        Returns dict mapping session_id -> list of prompt strings.
+        """
+        prompts = self.get_user_prompts()  # Start with history.jsonl
+
+        # Read from Codex Desktop global state (has recent prompts not in history.jsonl)
+        global_state_path = self._home / ".codex-global-state.json"
+        if global_state_path.exists():
+            try:
+                with open(global_state_path, "r", encoding="utf-8") as fh:
+                    data = json.loads(fh.read())
+                prompt_history = (
+                    data.get("electron-persisted-atom-state", {})
+                    .get("prompt-history", [])
+                )
+                # These aren't tagged with session_id, but we can add them
+                # to a special key so search can match them
+                if prompt_history:
+                    prompts.setdefault("__desktop_recent__", []).extend(prompt_history)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Read user messages from rollout files for provided sessions
+        if sessions:
+            for session in sessions:
+                if session.id in prompts and len(prompts[session.id]) > 1:
+                    continue  # Already have prompts for this session
+                rollout = self.resolve_rollout_path(session.id)
+                if not rollout:
+                    continue
+                path = Path(rollout)
+                if not path.is_absolute():
+                    path = self._home / path
+                if not path.exists():
+                    continue
+                user_texts = []
+                with open(path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if event.get("type") != "response_item":
+                            continue
+                        payload = event.get("payload", {})
+                        if payload.get("type") != "message" or payload.get("role") != "user":
+                            continue
+                        text = self._extract_text(payload.get("content", []), "user")
+                        # Skip system/instruction messages injected by Codex
+                        if text and len(text) > 10 and not text.startswith("<") and not text.startswith("#"):
+                            user_texts.append(text[:300])
+                if user_texts:
+                    prompts[session.id] = user_texts
 
         return prompts
 

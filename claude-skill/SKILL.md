@@ -64,9 +64,24 @@ python3 ~/.claude/skills/context-bridge/bin/context-bridge sync --repo REPO_NAME
 
 This produces a markdown section you can paste into CLAUDE.md.
 
+## Search Strategy (important)
+
+Conversations often evolve — a thread that started about "backend comparison" may end up covering
+simulations, company resolution, and deployment. The search now reads ALL user messages from each
+thread (not just the title), but follow this strategy for best results:
+
+1. **For "latest" or "most recent" requests**: Use `recent` first — it shows the last 3 user
+   prompts from each thread so you can see what the conversation is *currently* about.
+2. **For specific topics**: Use `search` with concrete keywords (e.g., "Apollo snapshot" not
+   "company resolution"). Try multiple keyword variations if the first search misses.
+3. **For vague requests**: Use `recent --repo REPO_NAME --days 3` and scan the "Recent turns"
+   output to identify the right thread, then use `thread` to read it in full.
+4. **Read the full thread** with `thread THREAD_ID` once you've identified the right one.
+
 ## Tips
-- Start with `recent` or `repos` to orient yourself
-- Use `search` with specific keywords from what the user mentioned
-- Only use `thread` when you need the full conversation detail
+- The `recent` output now shows the last 3 user prompts per thread — use this to find threads
+  whose topic evolved beyond their original title
+- Use `search` with specific technical terms the user mentioned
 - The output labels messages as YOU (user) and CODEX (assistant)
 - Thread IDs can be shortened to their prefix (first 8 chars)
+- Long conversations (30+ turns) may cover multiple topics — always check the "Recent turns" output
