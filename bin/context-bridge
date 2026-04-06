@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""context-bridge: Bidirectional conversation context between Claude Code and Codex."""
+
+import argparse
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from lib import VERSION, CODEX_HOME, CLAUDE_HOME
+from lib.codex_reader import CodexReader
+from lib.claude_reader import ClaudeReader
+from lib.search import search_sessions
+from lib.formatter import format_session_list, format_thread_messages, format_repos
+from lib.sync import sync_repo
+
+
+def _has_codex():
+    """Check if the Codex home directory and database exist."""
+    db_path = CODEX_HOME / "state_5.sqlite"
+    return CODEX_HOME.exists() and db_path.exists()
+
+
+def _has_claude():
+    """Check if the Claude home directory exists."""
+    projects_dir = CLAUDE_HOME / "projects"
+    return CLAUDE_HOME.exists() and projects_dir.exists()
+
+
+def _get_readers(source):
+    """Return (codex_reader_or_None, claude_reader_or_None) based on source flag."""
+    codex_reader = None
+    claude_reader = None
+    if source in ("codex", "both") and _has_codex():
+        codex_reader = CodexReader()
+    if source in ("claude", "both") and _has_claude():
+        claude_reader = ClaudeReader()
+    return codex_reader, claude_reader
+
+
+def cmd_search(args):
+    """Search conversation history."""
+    codex_reader, claude_reader = _get_readers(args.source)
+    all_sessions = []
+    user_prompts = {}
+
+    if codex_reader:
+        sessions = codex_reader.list_sessions(repo=args.repo, days_back=args.days)
+        all_sessions.extend(sessions)
+        if args.deep:
+            user_prompts = codex_reader.get_user_prompts()
+
+    if claude_reader:
+        sessions = claude_reader.list_sessions(repo=args.repo, days_back=args.days)
+        all_sessions.extend(sessions)
+
+    if not all_sessions:
+        print("No sessions found.")
+        return
+
+    results = search_sessions(
+        all_sessions, args.query,
+        user_prompts=user_prompts if args.deep else None,
+        deep=args.deep,
+    )
+    print(format_session_list(results))
+
+
+def cmd_recent(args):
+    """Show recent sessions."""
+    codex_reader, claude_reader = _get_readers(args.source)
+    all_sessions = []
+
+    if codex_reader:
+        all_sessions.extend(codex_reader.list_sessions(repo=args.repo, days_back=args.days))
+
+    if claude_reader:
+        all_sessions.extend(claude_reader.list_sessions(repo=args.repo, days_back=args.days))
+
+    # Sort combined results by updated_at descending
+    all_sessions.sort(key=lambda s: s.updated_at, reverse=True)
+    print(format_session_list(all_sessions))
+
+
+def cmd_thread(args):
+    """Read a specific thread by ID (supports prefix matching)."""
+    codex_reader, claude_reader = _get_readers(
+        args.source if args.source else "both"
+    )
+
+    # Collect candidate sessions from requested sources
+    candidates = []
+    if codex_reader:
+        for s in codex_reader.list_sessions(limit=200):
+            if s.id.startswith(args.id):
+                candidates.append(s)
+    if claude_reader:
+        for s in claude_reader.list_sessions(limit=200):
+            if s.id.startswith(args.id):
+                candidates.append(s)
+
+    if not candidates:
+        print(f"No thread found matching '{args.id}'.")
+        sys.exit(1)
+
+    if len(candidates) > 1:
+        # Check for exact match first
+        exact = [c for c in candidates if c.id == args.id]
+        if len(exact) == 1:
+            candidates = exact
+        else:
+            print(f"Multiple threads match '{args.id}':")
+            for c in candidates:
+                print(f"  [{c.source.upper()}] {c.id} | {c.repo}")
+            sys.exit(1)
+
+    session = candidates[0]
+
+    # Read messages based on source
+    if session.source == "codex":
+        reader = CodexReader()
+        rollout_path = reader.resolve_rollout_path(session.id)
+        if rollout_path:
+            messages = reader.read_thread(rollout_path)
+        else:
+            messages = []
+    else:
+        reader = ClaudeReader()
+        messages = reader.read_session(session.id, session.cwd)
+
+    print(format_thread_messages(session, messages))
+
+
+def cmd_repos(args):
+    """List repos with session counts."""
+    codex_reader, claude_reader = _get_readers(args.source)
+    repo_counts = defaultdict(lambda: [0, 0])  # {repo: [codex_count, claude_count]}
+
+    if codex_reader:
+        for s in codex_reader.list_sessions(limit=200):
+            repo_counts[s.repo][0] += 1
+
+    if claude_reader:
+        for s in claude_reader.list_sessions(limit=200):
+            repo_counts[s.repo][1] += 1
+
+    # Build sorted list of (repo_name, codex_count, claude_count)
+    repos = [
+        (name, counts[0], counts[1])
+        for name, counts in sorted(repo_counts.items())
+    ]
+    print(format_repos(repos))
+
+
+def cmd_sync(args):
+    """Generate context for CLAUDE.md / AGENTS.md."""
+    codex_reader = CodexReader() if _has_codex() else CodexReader.__new__(CodexReader)
+    claude_reader = ClaudeReader() if _has_claude() else ClaudeReader()
+
+    # Ensure readers are usable even if home dirs don't exist
+    if not _has_codex():
+        codex_reader = CodexReader()
+    if not _has_claude():
+        claude_reader = ClaudeReader()
+
+    results = sync_repo(args.repo, codex_reader, claude_reader)
+    print("\n".join(results))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="context-bridge",
+        description="Bidirectional conversation context between Claude Code and Codex.",
+    )
+    parser.add_argument("--version", action="version", version=f"context-bridge {VERSION}")
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    # search
+    p_search = subparsers.add_parser("search", help="Search conversation history")
+    p_search.add_argument("query", help="Search query")
+    p_search.add_argument("--source", choices=["codex", "claude", "both"], default="both")
+    p_search.add_argument("--repo", help="Filter by repo name")
+    p_search.add_argument("--days", type=int, help="Limit to last N days")
+    p_search.add_argument("--deep", action="store_true", help="Deep search (includes user prompts)")
+
+    # recent
+    p_recent = subparsers.add_parser("recent", help="Show recent sessions")
+    p_recent.add_argument("--source", choices=["codex", "claude", "both"], default="both")
+    p_recent.add_argument("--repo", help="Filter by repo name")
+    p_recent.add_argument("--days", type=int, default=7, help="Limit to last N days (default: 7)")
+
+    # thread
+    p_thread = subparsers.add_parser("thread", help="Read a specific thread")
+    p_thread.add_argument("id", help="Thread ID (or prefix)")
+    p_thread.add_argument("--source", choices=["codex", "claude"], help="Force source (auto-detects if omitted)")
+
+    # repos
+    p_repos = subparsers.add_parser("repos", help="List repos with session counts")
+    p_repos.add_argument("--source", choices=["codex", "claude", "both"], default="both")
+
+    # sync
+    p_sync = subparsers.add_parser("sync", help="Generate context for CLAUDE.md / AGENTS.md")
+    p_sync.add_argument("--repo", required=True, help="Repository name")
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        sys.exit(1)
+
+    commands = {
+        "search": cmd_search,
+        "recent": cmd_recent,
+        "thread": cmd_thread,
+        "repos": cmd_repos,
+        "sync": cmd_sync,
+    }
+    commands[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# context-bridge setup script
+# Installs skills for Claude Code and Codex
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CLAUDE_SKILLS="$HOME/.claude/skills"
+CODEX_SKILLS="$HOME/.codex/skills"
+
+echo "context-bridge setup"
+echo "===================="
+
+# Check Python
+if ! command -v python3 &>/dev/null; then
+    echo "ERROR: python3 is required but not found."
+    exit 1
+fi
+
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+echo "Python: $PYTHON_VERSION"
+
+# Check required modules
+python3 -c "import sqlite3, json, argparse, pathlib, re, datetime, difflib, dataclasses" 2>/dev/null || {
+    echo "ERROR: Python 3.7+ with dataclasses support is required."
+    exit 1
+}
+
+# Make CLI executable
+chmod +x "$SCRIPT_DIR/bin/context-bridge"
+echo "CLI: $SCRIPT_DIR/bin/context-bridge"
+
+# Install Claude Code skill
+if [ -d "$CLAUDE_SKILLS" ]; then
+    if [ ! -e "$CLAUDE_SKILLS/context-bridge" ]; then
+        ln -snf "$SCRIPT_DIR" "$CLAUDE_SKILLS/context-bridge"
+        echo "Claude Code skill: installed (symlink at $CLAUDE_SKILLS/context-bridge)"
+    else
+        echo "Claude Code skill: already installed"
+    fi
+    if [ ! -e "$CLAUDE_SKILLS/codex-context" ]; then
+        ln -snf "$SCRIPT_DIR/claude-skill" "$CLAUDE_SKILLS/codex-context"
+        echo "Claude Code /codex-context command: installed"
+    else
+        echo "Claude Code /codex-context command: already installed"
+    fi
+else
+    echo "Claude Code skills directory not found ($CLAUDE_SKILLS). Skipping."
+    echo "  To install manually: mkdir -p $CLAUDE_SKILLS && ln -snf $SCRIPT_DIR $CLAUDE_SKILLS/context-bridge"
+fi
+
+# Install Codex skill
+if [ -d "$CODEX_SKILLS" ]; then
+    if [ ! -e "$CODEX_SKILLS/context-bridge" ]; then
+        ln -snf "$SCRIPT_DIR" "$CODEX_SKILLS/context-bridge"
+        echo "Codex skill: installed (symlink at $CODEX_SKILLS/context-bridge)"
+    else
+        echo "Codex skill: already installed"
+    fi
+    if [ ! -e "$CODEX_SKILLS/claude-context" ]; then
+        ln -snf "$SCRIPT_DIR/codex-skill" "$CODEX_SKILLS/claude-context"
+        echo "Codex /claude-context command: installed"
+    else
+        echo "Codex /claude-context command: already installed"
+    fi
+else
+    echo "Codex skills directory not found ($CODEX_SKILLS). Skipping."
+    echo "  To install manually: mkdir -p $CODEX_SKILLS && ln -snf $SCRIPT_DIR $CODEX_SKILLS/context-bridge"
+fi
+
+# Check data availability
+echo ""
+echo "Data sources:"
+if [ -f "$HOME/.codex/state_5.sqlite" ]; then
+    COUNT=$(python3 -c "import sqlite3; c=sqlite3.connect('$HOME/.codex/state_5.sqlite'); print(c.execute('SELECT COUNT(*) FROM threads WHERE archived=0').fetchone()[0]); c.close()")
+    echo "  Codex: $COUNT threads found"
+else
+    echo "  Codex: no data found (~/.codex/state_5.sqlite missing)"
+fi
+
+if [ -d "$HOME/.claude/projects" ]; then
+    COUNT=$(find "$HOME/.claude/projects" -name "*.jsonl" -maxdepth 3 2>/dev/null | wc -l | tr -d ' ')
+    echo "  Claude Code: $COUNT session files found"
+else
+    echo "  Claude Code: no data found (~/.claude/projects missing)"
+fi
+
+echo ""
+echo "Setup complete! Try:"
+echo "  python3 $SCRIPT_DIR/bin/context-bridge repos"
+echo "  python3 $SCRIPT_DIR/bin/context-bridge recent --days 7"

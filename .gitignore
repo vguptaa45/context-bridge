@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+test/fixtures/codex_test.sqlite
+*.egg-info/
+dist/
+build/
+.env
+docs/plans/
