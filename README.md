@@ -10,6 +10,8 @@
 
 When you switch between Claude Code and Codex, your conversation history stays siloed. context-bridge lets each tool search the other's history — so Claude knows what you built in Codex, and Codex knows what you discussed in Claude.
 
+With usage limits on both platforms, switching between tools mid-project is increasingly common. context-bridge makes that switch seamless — no re-explaining, no lost context, just pick up where the other tool left off.
+
 ## Without context-bridge
 
 | Situation | What happens |
