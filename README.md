@@ -1,6 +1,12 @@
 # context-bridge
 
-**Bidirectional conversation context between Claude Code and Codex.**
+<p align="center">
+  <img src="https://media.tenor.com/tfwEkpgRMysAAAAC/connected-connection.gif" alt="Context Bridge" width="300"/>
+</p>
+
+<p align="center">
+  <strong>Bidirectional conversation context between Claude Code and Codex.</strong>
+</p>
 
 When you switch between Claude Code and Codex, your conversation history stays siloed. context-bridge lets each tool search the other's history — so Claude knows what you built in Codex, and Codex knows what you discussed in Claude.
 
